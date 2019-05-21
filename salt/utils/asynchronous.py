@@ -173,6 +173,8 @@ class IOLoop(object):
 class SyncWrapper(object):
 
     def __init__(self, cls, args=None, kwargs=None, async_methods=None, stop_methods=None, loop_kwarg=None):
+        self.io_loop = tornado.ioloop.IOLoop()
+        self.lock = threading.Semaphore()
         #log.error("WTF %s %s", cls, '\n'.join(traceback.format_stack()))
         if args is None:
             args = []
@@ -184,13 +186,18 @@ class SyncWrapper(object):
             stop_methods = []
         self.args = args
         self.kwargs = kwargs
-        self.cls = cls
-        self.obj = None
         self.loop_kwarg = loop_kwarg
+        self.cls = cls
+        if self.loop_kwarg:
+            self.kwargs[self.loop_kwarg] = self.io_loop
+        self.obj = cls(*args, **self.kwargs)
         self._async_methods = async_methods
-        for name in dir(cls):
-            if tornado.gen.is_coroutine_function(getattr(cls, name)):
+        for name in dir(self.obj):
+            if tornado.gen.is_coroutine_function(getattr(self.obj, name)):
                 self._async_methods.append(name)
+        #for name in dir(cls):
+        #    if tornado.gen.is_coroutine_function(getattr(cls, name)):
+        #        self._async_methods.append(name)
         self._stop_methods = stop_methods
         self._req = queue.Queue()
         self._res = queue.Queue()
@@ -204,15 +211,16 @@ class SyncWrapper(object):
         # support for py2.
         self._thread.daemon = True
         self._current_future = None
-        self.start()
+        #self.start()
 
     def __repr__(self):
         return '<SyncWrapper(cls={})'.format(self.cls)
 
     def start(self):
-        self._thread.start()
-        while self.obj is None:
-            time.sleep(.01)
+        pass
+        #self._thread.start()
+        #while self.obj is None:
+        #    time.sleep(.01)
 
     def stop(self):
         for method in self._stop_methods:
@@ -227,8 +235,9 @@ class SyncWrapper(object):
                 log.exception("Exception encountered while running stop method")
         if self._current_future:
             self._current_future.cancel()
-        self._stop.set()
-        self._thread.join()
+        self.io_loop.close()
+        #self._stop.set()
+        #self._thread.join()
 
     def __getattribute__(self, key):
         ex = None
@@ -239,11 +248,33 @@ class SyncWrapper(object):
                 raise ex
         if key in self._async_methods:
             def wrap(*args, **kwargs):
-                self._req.put((key, args, kwargs,))
-                success, result = self._res.get()
-                if not success:
-                    reraise(*result)
-                return result
+                with self.lock:
+                    results = []
+                    def target():
+                        try:
+        #                    log.error("RUN SYNC start")
+                            result = self.io_loop.run_sync(
+                                lambda: getattr(self.obj, key)(*args, **kwargs)
+                            )
+                            results.append(True)
+                            results.append(result)
+                        except Exception as exc:
+        #                    log.exception("MEH")
+                            results.append(False)
+                            results.append(sys.exc_info())
+        #                log.error("RUN SYNC  done")
+                    thread = threading.Thread(target=target)
+                    thread.start()
+                    thread.join()
+                    if results[0]:
+                        return results[1]
+                    else:
+                        reraise(*results[1])
+                #self._req.put((key, args, kwargs,))
+                #success, result = self._res.get()
+                #if not success:
+                #    reraise(*result)
+                #return result
             return wrap
         return getattr(self.obj, key)
 

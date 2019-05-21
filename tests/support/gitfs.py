@@ -358,12 +358,14 @@ class GitPillarTestBase(GitTestBase, LoaderModuleMockMixin):
             )
 
     def make_repo(self, root_dir, user='root'):
+        #log.error("MAKE REPO 1")
         self.bare_repo = os.path.join(root_dir, 'repo.git')
         self.admin_repo = os.path.join(root_dir, 'admin')
 
         for dirname in (self.bare_repo, self.admin_repo):
             shutil.rmtree(dirname, ignore_errors=True)
 
+        log.error("MAKE REPO 1 - init")
         # Create bare repo
         self.run_function(
             'git.init',
@@ -371,6 +373,7 @@ class GitPillarTestBase(GitTestBase, LoaderModuleMockMixin):
             user=user,
             bare=True)
 
+        #log.error("MAKE REPO 1 - clone")
         # Clone bare repo
         self.run_function(
             'git.clone',
@@ -397,6 +400,7 @@ class GitPillarTestBase(GitTestBase, LoaderModuleMockMixin):
                 user=user,
             )
 
+        #log.error("MAKE REPO 1 - write files")
         with salt.utils.files.fopen(
                 os.path.join(self.admin_repo, 'top.sls'), 'w') as fp_:
             fp_.write(textwrap.dedent('''\
@@ -426,8 +430,10 @@ class GitPillarTestBase(GitTestBase, LoaderModuleMockMixin):
         with salt.utils.files.fopen(
                 os.path.join(self.admin_repo, 'subdir', 'bar.sls'), 'w') as fp_:
             fp_.write('from_subdir: True\n')
+        #log.error("MAKE REPO 1 - push")
         _push('master', 'initial commit')
 
+        #log.error("MAKE REPO 1 - checkout")
         # Do the same with different values for "dev" branch
         self.run_function(
             'git.checkout',
@@ -435,6 +441,7 @@ class GitPillarTestBase(GitTestBase, LoaderModuleMockMixin):
             user=user,
             opts='-b dev')
         # The bar.sls shouldn't be in any branch but master
+        #log.error("MAKE REPO 1 - rm")
         self.run_function(
             'git.rm',
             [self.admin_repo, 'bar.sls'],
@@ -459,15 +466,18 @@ class GitPillarTestBase(GitTestBase, LoaderModuleMockMixin):
               nested_dict:
                 dev: True
             '''))
+        #log.error("MAKE REPO 1 - push dev")
         _push('dev', 'add dev branch')
 
         # Create just a top file in a separate repo, to be mapped to the base
         # env and referenced using git_pillar_includes
+        #log.error("MAKE REPO 1 - checkoout")
         self.run_function(
             'git.checkout',
             [self.admin_repo],
             user=user,
             opts='-b top_only')
+        #log.error("MAKE REPO 1 - rm")
         # The top.sls should be the only file in this branch
         self.run_function(
             'git.rm',
@@ -480,8 +490,10 @@ class GitPillarTestBase(GitTestBase, LoaderModuleMockMixin):
               '*':
                 - bar
             '''))
+        #log.error("MAKE REPO 1 - push")
         _push('top_only', 'add top_only branch')
 
+        #log.error("MAKE REPO 1 - checkout")
         # Create just another top file in a separate repo, to be mapped to the base
         # env and including mounted.bar
         self.run_function(
@@ -497,7 +509,9 @@ class GitPillarTestBase(GitTestBase, LoaderModuleMockMixin):
               '*':
                 - mounted.bar
             '''))
+        #log.error("MAKE REPO 1 - push")
         _push('top_mounted', 'add top_mounted branch')
+        #log.error("MAKE REPO 1 - done")
 
     def make_extra_repo(self, root_dir, user='root'):
         self.bare_extra_repo = os.path.join(root_dir, 'extra_repo.git')
@@ -657,6 +671,12 @@ class GitPillarHTTPTestBase(GitPillarTestBase, WebserverMixin):
                 except psutil.NoSuchProcess:
                     pass
         shutil.rmtree(cls.root_dir, ignore_errors=True)
+
+    def tearDown(self):
+        super(GitPillarTestBase, self).tearDown()
+        #log.error("REMOVOE ROOT DIR")
+        shutil.rmtree(self.repo_dir, ignore_errors=True)
+        #log.error("after REMOVOE ROOT DIR")
 
     def setUp(self):
         '''

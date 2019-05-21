@@ -423,13 +423,15 @@ class SaltEvent(object):
         if self._run_io_loop_sync:
             with salt.utils.asynchronous.current_ioloop(self.io_loop):
                 if self.pusher is None:
-                    self.pusher = salt.transport.ipc.IPCMessageClient(
-                        self.pulluri,
-                        io_loop=self.io_loop
+                    self.pusher = salt.utils.asynchronous.SyncWrapper(
+                        salt.transport.ipc.IPCMessageClient,
+                        args=(self.pulluri,),
+                        async_methods=['connect'],
+                        stop_methods=['close',],
+                        loop_kwarg='io_loop',
                     )
                 try:
-                    self.io_loop.run_sync(
-                        lambda: self.pusher.connect(timeout=timeout))
+                    self.pusher.connect(timeout=timeout)
                     self.cpush = True
                 except tornado.iostream.StreamClosedError:
                     log.trace("Pusher connect saw stream closed.")
@@ -549,6 +551,8 @@ class SaltEvent(object):
             # If no_block is False and wait is 0, that
             # means an infinite timeout.
             wait = None
+
+        #log.debug("_get_event IPCSubscriber read")
         while (run_once is False and not wait) or time.time() <= timeout_at:
             if no_block is True:
                 if run_once is True:
@@ -561,7 +565,7 @@ class SaltEvent(object):
                 if not self.cpub and not self.connect_pub(timeout=wait):
                     break
 
-                raw = self.subscriber._read(timeout=wait)
+                raw = self.subscriber._read(timeout=wait, no_log=True)
                 if raw is None:
                     break
                 mtag, data = self.unpack(raw, self.serial)
@@ -652,6 +656,10 @@ class SaltEvent(object):
                 if auto_reconnect:
                     raise_errors = self.raise_errors
                     self.raise_errors = True
+                    log.debug(
+                        "get_event IPCSubscriber read (autoreconnect) %s %s",
+                        wait, no_block
+                    )
                     while True:
                         try:
                             ret = self._get_event(wait, tag, match_func, no_block)
@@ -662,6 +670,10 @@ class SaltEvent(object):
                             continue
                     self.raise_errors = raise_errors
                 else:
+                    log.debug(
+                        "get_event IPCSubscriber read (no autoreconnect) %s %s",
+                        wait, no_block
+                    )
                     ret = self._get_event(wait, tag, match_func, no_block)
 
         if ret is None or full:
@@ -678,7 +690,8 @@ class SaltEvent(object):
         if not self.cpub:
             if not self.connect_pub():
                 return None
-        raw = self.subscriber.read_sync(timeout=0)
+        log.debug("get_event_noblock IPCSubscriber read")
+        raw = self.subscriber._read(timeout=0, no_log=True)
         if raw is None:
             return None
         mtag, data = self.unpack(raw, self.serial)
@@ -694,7 +707,8 @@ class SaltEvent(object):
         if not self.cpub:
             if not self.connect_pub():
                 return None
-        raw = self.subscriber.read_sync(timeout=None)
+        log.debug("get_event_block IPCSubscriber read")
+        raw = self.subscriber._read(timeout=None, no_log=True)
         if raw is None:
             return None
         mtag, data = self.unpack(raw, self.serial)
@@ -761,7 +775,7 @@ class SaltEvent(object):
         if self._run_io_loop_sync:
             with salt.utils.asynchronous.current_ioloop(self.io_loop):
                 try:
-                    self.io_loop.run_sync(lambda: self.pusher.send(msg))
+                    self.pusher.send(msg)
                 except Exception as ex:
                     log.exception("push SEND")
                     log.debug(ex)
@@ -787,10 +801,16 @@ class SaltEvent(object):
 
     def destroy(self):
         if self.subscriber is not None:
-            self.subscriber.close()
+            if self._run_io_loop_sync:
+                self.subscriber.stop()
+            else:
+                self.subscriber.close()
             self.subscriber = None
         if self.pusher is not None:
-            self.pusher.close()
+            if self._run_io_loop_sync:
+                self.pusher.stop()
+            else:
+                self.pusher.close()
             self.pusher = None
         if self._run_io_loop_sync and not self.keep_loop:
            self.io_loop.close()
